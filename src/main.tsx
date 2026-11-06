@@ -24,6 +24,7 @@ function App() {
     <main style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 860, margin: '2rem auto', padding: '0 1rem', lineHeight: 1.5 }}>
       <h1>CNC process-window lens</h1>
       <p>{r.dataset.n_recordings} real production vibration recordings ({r.dataset.n_bad} labelled bad), three CNC mills, 15 operations, 2019 to 2021. Interim results page; the full guided view comes later.</p>
+      <p><strong>Note:</strong> these tables use the original theoretical control limits and the drift-inclusive scorecard. Those limits under-cover at 16–25 training parts, so the false-alarm rates below overstate drift. Calibrated limits, a like-for-like scorecard and intervals are in METHOD.md.</p>
       <h2>1. Static baseline: false-alarm rate on good parts by timeframe</h2>
       <table><thead><tr><th>Timeframe</th><th>Static</th><th>Rolling re-baseline</th><th>n good</th></tr></thead>
         <tbody>{r.dataset.timeframes.map((t, i) => (

@@ -58,7 +58,7 @@ $$c = r_{(\lceil (n+1)(1-\alpha)\rceil)},\qquad r_i = \frac{T^2_{(-i)}(x_i)}{\ma
 
 Here $r_i$ is the leave-one-out ratio of qualification part $i$ to the limit of the model fitted without it, pooled over all cells. The limit becomes $c\cdot\mathrm{UCL}$. Under exchangeability, $P(r_{new} > c) \le \alpha$. One multiplier is fitted per statistic (T², SPE, RMS chart, Isolation Forest) with α = 0.01.
 
-**Qualification-set screen.** Without screening, the 99th percentile of the T² ratios is 6.9× the UCL (95th percentile 0.71×, 98th 1.22×), which gives a multiplier of 12.2. The tail is not random noise. It comes from two production runs: part 000 on M02 in Feb 2019, more than 3× its UCL in 8 operations, and part 006 on M01 in Aug 2019, more than 3× in 4 operations. When one part is off across its whole program, that is a machine-level event. The rule is fixed in advance: drop a run (machine, timeframe, part index) from every baseline when its leave-one-out T² is more than 3× the UCL in at least 3 operations. That drops 2 runs, 36 recordings. Screened recordings stay in every evaluation set and are scored out of sample.
+**Qualification-set screen.** Without screening, the 99th percentile of the T² ratios is 6.9× the UCL (95th percentile 0.71×, 98th 1.22×), which gives a multiplier of 12.2. The tail is not random noise. It comes from two production runs: part 000 on M02 in Feb 2019, more than 3× its UCL in 8 operations, and part 006 on M01 in Aug 2019, more than 3× in 4 operations. When one part is off across its whole program, that is more likely a machine-level event than process noise. The rule below was chosen after inspecting this tail, so it is post hoc: drop a run (machine, timeframe, part index) from every baseline when its leave-one-out T² is more than 3× the UCL in at least 3 operations. That drops 2 runs, 36 recordings. Screened recordings stay in every evaluation set and are scored out of sample.
 
 **Validation of the multiplier.** The cells are split into random halves 200 times. The multiplier is fitted on one half and the leave-one-out false-alarm rate is measured on the other.
 
@@ -93,13 +93,13 @@ The original scorecard compared all 70 bad parts (39 of them from Feb 2019, the 
 | Shape features invariant to a 3× gain; gain features shift by log₁₀3 | exact | pass |
 | Re-centring removes a pure offset exactly | exact | pass |
 | **Leave-one-out false alarms on real qualification parts, theoretical limits** (857 fits, unscreened) | T² 1% | **T² 3.3% [2.3, 4.7], SPE 10.4%, combined 11.6% [9.6, 13.9]** |
-| Leave-one-out after screening + calibration (831 fits) | 1% | T² 0.8% [0.4, 1.7], combined 1.3% [0.7, 2.4] |
+| Leave-one-out after screening + calibration (831 fits; in sample for the multiplier, so T² = 7 of 831 follows from the rank) | 1% | T² 0.8% [0.4, 1.7], combined 1.3% [0.7, 2.4] |
 | **Cross-validated calibration** (fit on half the cells, test on the other half, 200 splits) | ≈ 1% | **T² 0.96% (95% of splits 0–2.5%)**, combined 1.5% |
 
 ## Results (measured; reproduced by `pipeline/analyze.py` + `pipeline/diagnostics.py`)
 Multipliers after screening: T² 1.39, SPE 7.67, RMS chart 1.23, Isolation Forest 1.05. SPE needs a 7.7× correction, so its theoretical limit is not usable at this n.
 
-**1. The baseline goes stale (calibrated limits).** With T² limits calibrated to 0.8% leave-one-out false alarms inside qualification, the 2019 baseline flags **41.5% [38.0, 45.0] of the 762 later good parts**: Feb 2020 38.8%, Aug 2020 55.4%, Feb 2021 40.8%, Aug 2021 37.8%. The combined T²/SPE flags 58.1% [54.6, 61.6]. The earlier 76–97% headline used the uncalibrated combined limit and overstated the drift.
+**1. The baseline goes stale (calibrated limits).** With T² limits calibrated to a 1% target (0.96% on held-out cells, 0.8% on the parts used to fit the multiplier), the 2019 baseline flags **41.5% [38.0, 45.0] of the 762 later good parts**: Feb 2020 38.8%, Aug 2020 55.4%, Feb 2021 40.8%, Aug 2021 37.8%. The combined T²/SPE flags 58.1% [54.6, 61.6]. The earlier 76–97% headline used the uncalibrated combined limit and overstated the drift.
 
 **2. Detector scorecard, like with like.** Matched timeframes: 70 bad, 344 good, prevalence 16.9%.
 
@@ -110,15 +110,15 @@ Multipliers after screening: T² 1.39, SPE 7.67, RMS chart 1.23, Isolation Fores
 | PCA T² + SPE | **0.954** [0.927, 0.977] | **0.960** | 0.798 | 7.8% [5.5, 11.2] | **90.0%** [80.8, 95.1] |
 | Isolation Forest | 0.857 [0.800, 0.907] | 0.894 | 0.607 | 1.7% [0.8, 3.8] | 28.6% [19.3, 40.1] |
 
-RMS − T²/SPE AUC difference: −0.034 [−0.100, +0.007]. **The earlier claim that "plain SPC beats PCA" does not survive** a like-for-like comparison: the multivariate chart is at least as good, but the difference is not significant at 95%. On the drift-inclusive set (all bad parts against later good parts), RMS still wins (0.768 against 0.705; difference +0.063 [+0.007, +0.127]). It wins only because it reacts least to drift, not because it separates bad parts better. The Isolation Forest is the weakest in both cases.
+RMS − T²/SPE AUC difference: −0.034 [−0.100, +0.007]. **The earlier claim that "plain SPC beats PCA" does not survive** a like-for-like comparison: the multivariate chart is at least as good, but the difference is not significant at 95%. On the drift-inclusive set (all bad parts against later good parts), RMS still wins (0.768 against 0.705; difference +0.063 [+0.007, +0.127]). The likely reason is that it reacts least to drift (it flags 22.2% of later good parts against 41.5% for T²), not that it separates bad parts better. The Isolation Forest is the weakest in both cases.
 
 **3. Why it goes stale.**
-- *Spectral shape, not sensor gain.* Later-good false alarms: gain-only monitor (3 log-RMS values) 24.3% [21.4, 27.4], shape-only 41.9% [38.4, 45.4], gain + shape 42.9%. Most of the drift is in how energy is distributed across frequency, which a sensor reseat or gain change cannot produce. The gain-only monitor drifts least, at the cost of some detection (68.6% of all bad parts against 80.0%; matched AUC 0.900 against 0.929).
-- *Machine-level events.* Several timeframes show every operation on one machine moving the same way at once:
-  - M03, Feb 2020: x-axis 100–178 Hz power rose by a median 5.2σ in 13 of 13 operations (sign test p = 2.4×10⁻⁴).
+- *Spectral shape, not sensor gain.* Later-good false alarms: gain-only monitor (3 log-RMS values) 24.3% [21.4, 27.4], shape-only 41.9% [38.4, 45.4], gain + shape 42.9%. More of the drift is in how energy is distributed across frequency than in overall level. A pure gain change cannot produce a shape shift, but a sensor reseat that changes the mount resonance could, so this does not rule out the sensor. The shape monitor also has 6 inputs to the gain monitor's 3, which gives it more directions in which to alarm, so the comparison is indicative. The gain-only monitor drifts least, at the cost of some detection (68.6% of all bad parts against 80.0%; matched AUC 0.900 against 0.929).
+- *Machine-level events.* Several timeframes show (nearly) every operation on one machine moving the same way at once. The p-values below are nominal. Bonferroni over the 40 features multiplies them by 40 (0.0098 for 13 of 13, 0.0195 for 12 of 12). Across all 10 machine × timeframe groups (400 tests) no single result survives a full Bonferroni correction; with 13 operations the smallest possible p is 2.4×10⁻⁴. The z-shifts are measured in units of the training sd from 16–25 parts, so a narrow training spread can make them very large.
+  - M03, Feb 2020: x-axis 100–178 Hz power rose by a median 5.2σ in 13 of 13 operations (sign test p = 2.4×10⁻⁴). M03 otherwise has the smallest overall shift of the three machines (median |z| 0.7).
   - M01, Feb 2021: z-axis 18–100 Hz bands shifted in 12 of 12 operations (p = 4.9×10⁻⁴), with 10 features significant after Bonferroni.
-  - M02, Aug 2020: x-axis 178–316 Hz rose by a median 39σ in 12 of 13 operations (p = 3.4×10⁻³).
-  These are one-machine events (maintenance, spindle or fixture work), so they call for one re-baseline per machine, not 15 separate investigations.
+  - M02, Aug 2020: x-axis 178–316 Hz rose by a median 39σ in 12 of 13 operations (p = 3.4×10⁻³). This feature does not pass the 40-feature Bonferroni threshold (1.25×10⁻³), although 8 other features in the same machine × timeframe do.
+  These look like one-machine events (maintenance, spindle or fixture work). If maintenance records confirm that, each calls for one re-baseline per machine rather than up to 15 separate investigations. The dataset has no maintenance log, so the cause is inferred, not confirmed.
 - *Step or excursion.* M01 and M03 behave as steps: the first later timeframe already carries 76% and 81% of the largest shift. M02 is an excursion: its median shift rises from 2.6σ to 4.6σ in Aug 2020, then falls back to 2.0σ. The step and excursion labels are a fixed 70% rule applied to only 2–4 timeframes per machine, so they describe what was seen and are not a test.
 - *Which band.* Ranked by median |z| over all cells and later timeframes, the top features are z-axis 18–32 Hz (4.7σ), 32–56 Hz (3.7σ) and 56–100 Hz (3.1σ, consistently down). In the most-shifted cell (M02 OP09, Feb 2021 against Aug 2019), mean z-axis power in 10–100 Hz is 0.92 decades lower (about 8× less), while 100–1000 Hz moves by only +0.08 decades.
 
@@ -126,24 +126,25 @@ RMS − T²/SPE AUC difference: −0.034 [−0.100, +0.007]. **The earlier claim
 
 | Baseline on the new machine | False alarms on good parts | Detection, in-period bad |
 |---|---|---|
-| Copied unchanged | 68.9% [66.6, 71.1] | 91.7% |
+| Copied unchanged (23%–86% by machine pair) | 68.9% [66.6, 71.1] | 91.7% |
 | Copied loadings, re-centred on 10 parts | 21.9% [19.1, 25.0] | 72.6% |
-| Copied loadings, re-centred + re-scaled on 10 consecutive parts | 7.6% [5.9, 9.7] | 67.9% |
-| Copied loadings, re-centred + re-scaled on 10 parts spread across the run (500 draws) | **3.0% [1.7, 4.5]** | 60.5% [54.8, 67.9] |
+| Copied loadings, re-centred + re-scaled on the first 10 parts in recording order | **7.6% [5.9, 9.7]** | 67.9% |
+| Copied loadings, re-centred + re-scaled on 10 parts drawn at random from the qualification period (mean of 500 draws; brackets give the 2.5–97.5% range over draws) | **3.0% [1.7, 4.5]** | 60.5% [54.8, 67.9] |
 | Full per-machine qualification (16–25 parts) | 0.8% [0.4, 1.3] | 69.0% [58.5, 77.9] |
 
-The copied monitor's high detection is not a strength. It alarms on almost everything. Re-centring alone is not enough because each machine also has its own spread. Consecutive parts under-represent that spread, so the same 10 parts give 7.6% false alarms when consecutive and 3.0% when spread out. After a step, re-centring the machine's own monitor on its first 5 parts cuts false alarms in that timeframe from 39.9% to 15.6%, but in later timeframes from only 23.4% to 21.3%. Each new step needs its own re-baseline.
+The copied monitor's high detection is not a strength. It alarms on almost everything. Re-centring alone is not enough because each machine also has its own spread. Each cell's qualification set holds 1–5 Feb 2019 good parts and about 18 Aug 2019 good parts, so the first 10 in recording order are a few Feb 2019 parts plus the first Aug 2019 parts, while random draws sample the whole qualification period. The first 10 give 7.6% false alarms and random draws 3.0%. The random-draw figure assumes the reference parts represent the whole qualification period, which a real ramp cannot guarantee, so 7.6% is the more realistic estimate for a ramp. The curve is not monotonic in N: at N = 15 only 38 of 82 machine pairs have enough parts left to test, and the first-15 figure is 12.2%. The copied-baseline interval counts each new-machine part twice (once per lead machine), so it is narrower than it should be. After a step, re-centring the machine's own monitor on its first 5 parts cuts false alarms in that timeframe from 39.9% to 15.6%, but in later timeframes from only 23.4% to 21.3%. Each new step needs its own re-baseline.
 
-Scenario at 15 min of triage per alarm: a copied baseline costs 689 alarms and about 172 engineer-hours per 1,000 good parts. Re-centring alone on 10 parts costs 219 alarms (55 h). Re-centring and re-scaling on 10 spread parts costs 30 alarms (7.5 h). Full qualification costs 8 alarms (2 h). The 15-minute triage time is an assumption; the false-alarm rates are measured.
+Scenario at 15 min of triage per alarm: a copied baseline costs 689 alarms and about 172 engineer-hours per 1,000 good parts. Re-centring alone on 10 parts costs 219 alarms (55 h). Re-centring and re-scaling on the first 10 parts costs 76 alarms (19 h), and on 10 random qualification parts 30 alarms (7.4 h). Full qualification costs 8 alarms (1.9 h). The 15-minute triage time is an assumption; the false-alarm rates are measured.
 
 **Recommendation.**
-1. **Bring-up:** copy the lead machine's PCA structure, then re-centre *and* re-scale on 10 good parts spread across the first runs, not 10 consecutive ones. Run a full 16–25 part qualification once the volume allows it. Screen the qualification set for runs that are off in several operations at once before setting limits.
+1. **Bring-up:** copy the lead machine's PCA structure, then re-centre *and* re-scale on at least 10 good parts, sampled as widely across the early runs as possible (here the first 10 parts gave 7.6% false alarms and 10 random qualification parts 3.0%). Run a full 16–25 part qualification once the volume allows it. Screen the qualification set for runs that are off in several operations at once before setting limits.
 2. **Re-baseline trigger:** the machine-level sign test. When most operations on one machine shift the same way in the same band, re-baseline that machine once.
-3. **Chart:** T² + SPE with empirically calibrated limits (best matched AUC and detection), backed by the RMS chart as a drift-robust check. Do not use the theoretical SPE limit at n < 30.
+3. **Chart:** T² + SPE with empirically calibrated limits (highest matched AUC, though not significantly above the RMS chart; its higher detection comes with about 3× the RMS chart's false alarms at the limits), backed by the RMS chart as a drift-robust check. Do not use the theoretical SPE limit at n < 30.
 
 ## Assumptions and limitations
 - Labels come from the dataset authors. A bad label means an anomalous process, not a measured dimensional defect. There are only 70 bad recordings (0–4 per cell); per-cell detection is not meaningful, so results are pooled with cluster-bootstrap intervals.
-- The conformal multiplier assumes leave-one-out ratios are exchangeable across cells. The half-split check supports this (0.96% against 1%). The screening rule removes 36 of 857 qualification recordings; it was fixed before the scorecard was run, and unscreened numbers are reported above.
+- The conformal multiplier assumes leave-one-out ratios are exchangeable across cells. The half-split check supports this (0.96% against 1%). The screening rule removes 36 of 857 qualification recordings. It was chosen after looking at the calibration tail (post hoc), and unscreened numbers are reported above.
+- Wilson intervals treat parts as independent. Parts share a cell and timeframe, so these intervals are likely narrower than cluster-aware ones. Only the AUCs use a cluster bootstrap.
 - Nyquist is 1 kHz and spindle speed and tool data are not in the dataset, so tooth-pass and spindle harmonics cannot be assigned. Band shifts are located but not attributed to a specific mechanism.
 - Recording order within a timeframe is taken from the file index. Wall-clock timestamps are not available, so "first N parts" means first by index.
 - Features are recording-level and ignore sub-operation segmentation. Timeframe sizes are uneven (Aug 2020 has 92 later good parts). The rolling re-baseline equals the static one in Feb 2020 by construction.
