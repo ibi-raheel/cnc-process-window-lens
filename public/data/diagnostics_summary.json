@@ -38,7 +38,7 @@
   "screen": {
    "rule": "drop a run whose LOO T2 > 3.0 x UCL in >= 3 operations",
    "runs_flagged": 2,
-   "recordings_dropped": 36,
+   "recordings_dropped": 26,
    "candidates": [
     {
      "machine": "M01",

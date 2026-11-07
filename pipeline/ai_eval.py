@@ -9,6 +9,10 @@ Pre-declared before any result was computed:
   arms       crop (primary, duration-blind: every recording of a cell cut to a common prefix of
              0.45 x the cell's qualification median length, identical window starts) and full
              (windows spread over each whole recording, as in the prototypes)
+  (added after the first runs) align: the crop arm after program-phase alignment (align.py). The
+             crop turned out to be length-blind but not start-blind: the bad files are trimmed
+             excerpts that start a median 3.8 s later in the program, so their prefix covers other
+             toolpath phases. A head must now pass in both crop and align.
   heads      A = dual ridge on mean PPV, trained on 2019 labels only and scored forward in time
              (2019 parts cross-fitted by machine x timeframe); B = kNN memory bank of good windows
   baselines  rms, t2spe, cycle (Shewhart on log10 cycle time) and the fused rule
@@ -52,7 +56,8 @@ from stats import (boot_delta, ci, cluster_bootstrap_auc, conformal_multiplier, 
                    min_n_for_alpha, part_bootstrap_auc, pooled_ap, strata_ids, stratified_auc, wilson)
 
 SEEDS = (0, 1, 2)
-ARMS = ("crop", "full")
+ARMS = ("crop", "full", "align")
+CUT_ARMS = ("crop", "align")   # arms cut to a common window; their tables also carry the whole-recording charts
 MACHINES = ("M01", "M02", "M03")
 N_BOOT = 2000
 ALPHA = 0.05
@@ -108,20 +113,26 @@ class Data:
         assert (F["label"][j] == M["label"]).all() and (F["tf"][j] == M["tf"]).all()
         self.machine, self.op, self.tf, self.idx, self.label = (M[k] for k in ("machine", "op", "tf", "idx", "label"))
         self.n_samples, self.crop_len = M["n_samples"], M["crop_len"]
-        self.starts = {"full": M["starts_full"], "crop": M["starts_crop"]}
-        self.band = {"full": M["band_full"], "crop": M["band_crop"]}
+        self.starts = {"full": M["starts_full"], "crop": M["starts_crop"], "align": M["starts_align"]}
+        self.band = {"full": M["band_full"], "crop": M["band_crop"], "align": M["band_align"]}
+        self.lag, self.align_corr = M["lag"], M["align_corr"]      # start offset in samples (align.py)
         self.edges = M["attr_edges"]
         self.K, self.L = int(M["K"]), int(M["L"])
         self.crop_frac = float(M["crop_frac"])
         X40 = F["X"][j]
-        self.X9 = {"full": model_features(X40)[0], "crop": model_features(M["feat40_prefix"])[0]}
-        self.lrms = {"full": np.log10(F["rms"][j]), "crop": np.log10(M["rms_prefix"])}
+        self.X9 = {"full": model_features(X40)[0], "crop": model_features(M["feat40_prefix"])[0],
+                   "align": model_features(M["feat40_align"])[0]}
+        self.lrms = {"full": np.log10(F["rms"][j]), "crop": np.log10(M["rms_prefix"]),
+                     "align": np.log10(M["rms_align"])}
         self.ldur = np.log10(self.n_samples / FS)
         self.n = len(self.label)
         self.cell = np.char.add(np.char.add(self.machine, "-"), self.op)
         flagged, self.screen_rows, _, _ = screen_runs(self.X9["full"], self.machine, self.op, self.tf,
                                                       self.label, self.idx)
-        self.dropped = np.array([(self.machine[i], int(self.tf[i]), int(self.idx[i])) in flagged
+        # The screen flags good runs keyed (machine, timeframe, part index). Bad files are numbered
+        # separately and reuse those indices, so the key must only ever match good rows (before this
+        # fix the 10 M02 Feb 2019 bad files numbered 000 were silently dropped from ridge training).
+        self.dropped = np.array([self.label[i] == 0 and (self.machine[i], int(self.tf[i]), int(self.idx[i])) in flagged
                                  for i in range(self.n)])
         refs = reference_sets(self.machine, self.op, self.tf, self.label, self.idx, self.dropped)
         self.refs = {f"{m}-{o}": r for (m, o), r in refs.items()}
@@ -261,8 +272,8 @@ def scorecard(D: Data, S: dict, U: dict, mask, strata, best, seed=0, part=False,
 
 
 def gate(D: Data, S: dict, U: dict, arm: str) -> dict:
-    best = ["rms", "t2spe", "rms_full", "t2spe_full"] if arm == "crop" else ["rms", "t2spe"]
-    rms_set = ["rms", "rms_full"] if arm == "crop" else ["rms"]
+    best = ["rms", "t2spe", "rms_full", "t2spe_full"] if arm in CUT_ARMS else ["rms", "t2spe"]
+    rms_set = ["rms", "rms_full"] if arm in CUT_ARMS else ["rms"]
     sc = scorecard(D, S, U, D.in_scope, D.mot, best, ap=False)
     lat = D.later
     names = list(dict.fromkeys([*HEADS, *rms_set, "t2spe", "cycle", "fused_ridge", "fused_knn"]))
@@ -737,10 +748,10 @@ def main(out_dir: str, results_path: str):
     D = Data(out)
     timing = {}
     cls_all, Scl_all = {}, {}
-    for arm in ("full", "crop"):
+    for arm in ARMS:
         Scl_all[arm], cls_all[arm] = classical(D, arm)
     timing["classical_s"] = time.time() - T0
-    R = {"config": {"seeds": list(SEEDS), "arms": list(ARMS), "primary_arm": "crop", "K": D.K, "L": D.L,
+    R = {"config": {"seeds": list(SEEDS), "arms": list(ARMS), "primary_arm": "crop", "attribution_arm": "align", "K": D.K, "L": D.L,
                     "crop_frac": D.crop_frac, "alpha": ALPHA, "alpha_strict": ALPHA_STRICT, "gate_far": GATE_FAR,
                     "n_boot": N_BOOT, "requal_N": list(REQ_N), "requal_draws": REQ_DRAWS, "lomo_N": list(LOMO_N),
                     "drift_k": K_DRIFT, "drift_cut": CUT, "min_n_alpha_0.05": min_n_for_alpha(ALPHA),
@@ -773,6 +784,15 @@ def main(out_dir: str, results_path: str):
                        "duration_only_auc": max(stratified_auc(D.ldur[el], D.label[el], D.mot[el]),
                                                 stratified_auc(-D.ldur[el], D.label[el], D.mot[el])),
                        "short_cycle_auc": stratified_auc(-D.ldur[el], D.label[el], D.mot[el]),
+                       # label-free start offset (align.py): how much later in the program a recording starts
+                       "start_offset_auc": stratified_auc(D.lag[el].astype(float), D.label[el], D.mot[el]),
+                       "start_offset_s_quantiles": {
+                           lab: {q: float(np.quantile(D.lag[D.in_scope & (D.label == v)] / FS, float(q)))
+                                 for q in ("0.05", "0.5", "0.95")} for lab, v in (("good", 0), ("bad", 1))},
+                       "bad_starting_over_1s_late": int(((D.lag > FS) & D.in_scope & (D.label == 1)).sum()),
+                       "good_starting_over_1s_late_share": float(np.mean(D.lag[D.in_scope & (D.label == 0)] > FS)),
+                       "bad_length_multiple_of_1024": int(((D.n_samples % 1024 == 0) & (D.label == 1)).sum()),
+                       "good_length_multiple_of_1024_share": float(np.mean(D.n_samples[D.label == 0] % 1024 == 0)),
                        "bad_duration_ratio_quantiles": {q: float(np.nanquantile(D.dur_ratio[D.in_scope & (D.label == 1)], float(q)))
                                                         for q in ("0.0", "0.1", "0.5", "0.9", "1.0")},
                        "good_duration_ratio_quantiles": {q: float(np.nanquantile(D.dur_ratio[D.in_scope & (D.label == 0)], float(q)))
@@ -790,20 +810,22 @@ def main(out_dir: str, results_path: str):
             H, ex, alphas = heads(D, out, arm, seed)
             S = {**Scl_all[arm], **H}
             add_fused(D, S)
-            if arm == "crop":
+            if arm in CUT_ARMS:
                 S["rms_full"], S["t2spe_full"] = Scl_all["full"]["rms"], Scl_all["full"]["t2spe"]
             U = {k: normalise(D, S[k])[0] for k in S}
             np.savez(out / f"scores_{arm}_s{seed}.npz", rel=D.rel, **{f"S_{k}": v for k, v in S.items()},
                      **{f"U_{k}": v for k, v in U.items()})
-            best = ["rms", "t2spe", "rms_full", "t2spe_full"] if arm == "crop" else ["rms", "t2spe"]
+            best = ["rms", "t2spe", "rms_full", "t2spe_full"] if arm in CUT_ARMS else ["rms", "t2spe"]
             g = gate(D, S, U, arm)
             sc = scorecard(D, S, U, D.in_scope, D.mot, best, part=(seed == 0))
             dr = drift_static(D, S, ALPHA)
             sp = {h: {"good": float(spearmanr(S[h][D.in_scope & (D.label == 0)], D.dur_ratio[D.in_scope & (D.label == 0)])[0]),
                       "bad": float(spearmanr(S[h][D.in_scope & (D.label == 1)], D.dur_ratio[D.in_scope & (D.label == 1)])[0])}
                   for h in HEADS}
+            sp_lag = {h: {lab: float(spearmanr(S[h][D.in_scope & (D.label == v)], D.lag[D.in_scope & (D.label == v)])[0])
+                          for lab, v in (("good", 0), ("bad", 1))} for h in (*HEADS, "rms", "t2spe")}
             A["seeds"][seed] = {"gate": g, "scorecard": sc, "drift_alpha_0.05": dr, "ridge_alpha": alphas,
-                                "spearman_score_vs_duration_ratio": sp}
+                                "spearman_score_vs_duration_ratio": sp, "spearman_score_vs_start_offset": sp_lag}
             print(f"{arm} seed {seed}: " + ", ".join(f"{h} AUC {g['heads'][h]['auc']:.3f} vs best classical "
                                                       f"{g['heads'][h]['best_classical_auc']:.3f} "
                                                       f"dCI {np.round(g['heads'][h]['A_delta_auc']['ci'], 3).tolist()} "
@@ -815,7 +837,7 @@ def main(out_dir: str, results_path: str):
                 A["scorecard_machine_x_tf"] = scorecard(D, S, U, D.in_scope, D.mt, best)
                 A["scorecard_later_only"] = scorecard(D, S, U, D.later, D.mot, best)
                 A["drift_alpha_0.01"] = drift_static(D, S, ALPHA_STRICT)
-                bsets = {"rms": ["rms"], "best_rms": ["rms", "rms_full"] if arm == "crop" else ["rms"]}
+                bsets = {"rms": ["rms"], "best_rms": ["rms", "rms_full"] if arm in CUT_ARMS else ["rms"]}
                 A["matched_far"] = {f"{f:.2f}": matched_far(D, U, f, bsets) for f in (0.05, 0.10)}
                 print(f"{arm} seed 0 tables done ({time.time() - ts:.0f}s)", flush=True)
                 ts = time.time()
@@ -828,7 +850,7 @@ def main(out_dir: str, results_path: str):
                 timing[f"{arm}_lomo_s"] = time.time() - ts
                 print(f"{arm} seed 0 lomo done ({time.time() - ts:.0f}s)", flush=True)
                 A["drift_subspace"], Z, Zraw, share = drift_section(D, arm, S)
-                if arm == "crop":
+                if arm == "align":   # attribution needs matching program phases: aligned arm only
                     A["fingerprints"] = fingerprints(D, Zraw)
                     keep = (S, U, ex, Zraw, share)
         names = list(A["seeds"][0]["scorecard"]["detectors"])
@@ -843,10 +865,14 @@ def main(out_dir: str, results_path: str):
     dec = {}
     for arm in ARMS:
         dec[arm] = {h: all(arms[arm]["seeds"][s]["gate"]["heads"][h]["pass"] for s in SEEDS) for h in HEADS}
-    passed = [h for h in HEADS if dec["crop"][h]]
-    R["decision"] = {"gate_crop": dec["crop"], "gate_full_for_reference": dec["full"], "passed_heads": passed,
+    # Pre-declared: the crop arm decides. Found afterwards: the crop is length-blind but not
+    # start-blind (bad files are trimmed excerpts), so a head must also pass in the aligned arm.
+    passed = [h for h in HEADS if dec["crop"][h] and dec["align"][h]]
+    R["decision"] = {"gate_crop": dec["crop"], "gate_align": dec["align"], "gate_full_for_reference": dec["full"],
+                     "passed_heads": passed,
                      "headline_mode": "ai" if passed else "fallback_label_free_requalification",
-                     "rule": "a head passes when conditions A and B hold for all 3 seeds in the crop arm",
+                     "rule": "a head passes when conditions A and B hold for all 3 seeds in the crop arm (pre-declared) "
+                             "and in the program-aligned arm (added after the start-offset shortcut was found)",
                      "by_seed": {arm: {h: [{k: arms[arm]["seeds"][s]["gate"]["heads"][h][k]
                                             for k in ("auc", "best_classical_auc", "best_classical_name", "A_delta_auc",
                                                       "A_pass", "det_at_far",
@@ -855,7 +881,7 @@ def main(out_dir: str, results_path: str):
     primary = passed[0] if passed else "knn"
     S, U, ex, Z, share = keep
     R["primary_head"] = primary
-    R["alarms"] = drilldown(D, "crop", S, U, ex, Z, share, primary)
+    R["alarms"] = drilldown(D, "align", S, U, ex, Z, share, primary)
     R["parts"] = parts_table(D, U)
     R["arms"] = arms
     timing["total_s"] = time.time() - T0

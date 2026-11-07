@@ -123,7 +123,8 @@ def main(npz: str, out: str):
     lrms = np.log10(rms)
     DETS = ["rms", "t2", "comb", "iso"]
     flagged, screen_rows, u_t2, u_spe = screen_runs(X9, machine, op, tf, label, seq)
-    dropped = np.array([(machine[i], int(tf[i]), int(seq[i])) in flagged for i in range(len(seq))])
+    # runs are keyed (machine, timeframe, part index); bad files reuse those indices, so good rows only
+    dropped = np.array([label[i] == 0 and (machine[i], int(tf[i]), int(seq[i])) in flagged for i in range(len(seq))])
     print(f"screen: {len(flagged)} runs flagged, {int(dropped.sum())} recordings", flush=True)
 
     cells = []  # per-cell bookkeeping

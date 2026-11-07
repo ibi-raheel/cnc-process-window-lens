@@ -1,4 +1,4 @@
-"""Stage 5a: raw vibration windows for the MiniRocket heads, in two arms.
+"""Stage 5a: raw vibration windows for the MiniRocket heads, in three arms.
 
 full : K windows of L samples evenly spaced over each recording's own length (the scheme the
        four prototypes used). A truncated recording therefore samples different toolpath phases.
@@ -7,6 +7,13 @@ crop : the duration control. Per machine x operation cell, a common prefix of
        windows at identical start indices linspace(0, T_c - L, K) for every recording of the cell.
        Recording length then carries no information. Every recording must cover T_c (asserted;
        on this data the shortest recording is 0.494 x its cell's qualification median).
+align: the crop arm after program-phase alignment (align.py). The crop removes recording length but
+       not WHERE a recording starts, and on this data the bad recordings are trimmed excerpts that
+       start a median 3.8 s later in the program than good ones (a start-offset detector alone has
+       like-for-like AUC 0.94). Per cell, every recording i covers program time [lag_i, lag_i + n_i);
+       the arm takes the common program window [A_c, A_c + T_c) with A_c = max(0, max_i lag_i) and
+       T_c = min(min_i(lag_i + n_i) - A_c, crop T_c), i.e. recording samples from A_c - lag_i. Lags
+       are estimated without labels; the window placement is label-blind.
 
 Per recording it also stores the vector-magnitude RMS of the whole recording and of the prefix
 (the RMS chart in each arm), the repo's 40 features on the prefix (T^2+SPE in the crop arm),
@@ -16,8 +23,8 @@ length, and the path relative to the data directory. Good and bad files share ba
 rows are keyed by relative path.
 
 Usage: python -I pipeline/windows.py <data_dir> pipeline/out
-Writes out/windows_full.npy and out/windows_crop.npy (N x K x 3 x L float32, about 0.5 GB each)
-and out/windows_meta.npz.
+Writes out/windows_{full,crop,align}.npy (N x K x 3 x L float32, about 0.5 GB each) and
+out/windows_meta.npz. Needs out/align.npz (align.py) first.
 """
 from __future__ import annotations
 
@@ -105,15 +112,31 @@ def vec_rms(d: np.ndarray) -> float:
     return rms(np.linalg.norm(dt, axis=1))
 
 
+def align_windows(lag: np.ndarray, n: np.ndarray, cell: np.ndarray, T_crop: np.ndarray):
+    """Per recording: (offset into the recording, common aligned length) of the program window
+    every recording of its cell covers. lag_i = program time at the recording's first sample."""
+    off, T = np.zeros(len(n), int), np.zeros(len(n), int)
+    for c in np.unique(cell):
+        ii = np.where(cell == c)[0]
+        A = max(0, int(lag[ii].max()))
+        Tc = min(int((lag[ii] + n[ii]).min()) - A, int(T_crop[ii].min()))
+        if Tc < L:
+            raise ValueError(f"aligned window of {c} shorter than one window")
+        off[ii], T[ii] = A - lag[ii], Tc
+    assert (off >= 0).all() and (off + T <= n).all()
+    return off, T
+
+
 def one(args):
-    path, T = args
+    path, T, oa, Ta = args
     d = np.asarray(load(path), dtype=np.float64)
     n = len(d)
     sf, sc = full_starts(n), prefix_starts(T)
-    assert n >= T and sc[-1] + L <= T
-    wf, wc = cut(d, sf), cut(d, sc)
-    return (wf, wc, band_log_power(wf), band_log_power(wc), sf, sc, n,
-            vec_rms(d), vec_rms(d[:T]), features(d[:T]))
+    sa = oa + prefix_starts(Ta)
+    assert n >= T and sc[-1] + L <= T and sa[-1] + L <= n
+    wf, wc, wa = cut(d, sf), cut(d, sc), cut(d, sa)
+    return (wf, wc, wa, band_log_power(wf), band_log_power(wc), band_log_power(wa), sf, sc, sa, n,
+            vec_rms(d), vec_rms(d[:T]), vec_rms(d[oa:oa + Ta]), features(d[:T]), features(d[oa:oa + Ta]))
 
 
 def main(data_dir: str, out_dir: str):
@@ -135,25 +158,35 @@ def main(data_dir: str, out_dir: str):
     crops = crop_lengths(n_len, cell, tf, label)
     T_row = np.array([crops[c]["T"] for c in cell])
     assert (n_len >= T_row).all(), "a recording is shorter than its cell's prefix"
+    AL = np.load(out / "align.npz")
+    assert (AL["relpath"] == np.array(rel)).all(), "align.npz is out of date: rerun align.py"
+    lag = AL["lag"].astype(int)
+    off_al, T_al = align_windows(lag, n_len, cell, T_row)
     N = len(files)
     Wf = np.lib.format.open_memmap(out / "windows_full.npy", "w+", np.float32, (N, K, 3, L))
     Wc = np.lib.format.open_memmap(out / "windows_crop.npy", "w+", np.float32, (N, K, 3, L))
+    Wa = np.lib.format.open_memmap(out / "windows_align.npy", "w+", np.float32, (N, K, 3, L))
     nb = len(ATTR_EDGES) - 1
-    band_full = np.empty((N, K, 3, nb), np.float32); band_crop = np.empty((N, K, 3, nb), np.float32)
-    st_full = np.empty((N, K), int); st_crop = np.empty((N, K), int)
-    rms_full = np.empty(N); rms_pre = np.empty(N); f40 = np.empty((N, 40))
+    band_full, band_crop, band_al = (np.empty((N, K, 3, nb), np.float32) for _ in range(3))
+    st_full, st_crop, st_al = (np.empty((N, K), int) for _ in range(3))
+    rms_full = np.empty(N); rms_pre = np.empty(N); rms_al = np.empty(N)
+    f40 = np.empty((N, 40)); f40_al = np.empty((N, 40))
+    jobs = [(str(p), int(T), int(o), int(t)) for p, T, o, t in zip(files, T_row, off_al, T_al)]
     with Pool(4) as pool:
-        for i, r in enumerate(pool.imap(one, [(str(p), int(T)) for p, T in zip(files, T_row)], chunksize=8)):
-            wf, wc, bf, bc, sf, sc, n, rf, rp, ff = r
+        for i, r in enumerate(pool.imap(one, jobs, chunksize=8)):
+            wf, wc, wa, bf, bc, ba, sf, sc, sa, n, rf, rp, ra, ff, fa = r
             assert n == n_len[i]
-            Wf[i], Wc[i], band_full[i], band_crop[i] = wf, wc, bf, bc
-            st_full[i], st_crop[i], rms_full[i], rms_pre[i], f40[i] = sf, sc, rf, rp, ff
-    Wf.flush(); Wc.flush()
+            Wf[i], Wc[i], Wa[i], band_full[i], band_crop[i], band_al[i] = wf, wc, wa, bf, bc, ba
+            st_full[i], st_crop[i], st_al[i] = sf, sc, sa
+            rms_full[i], rms_pre[i], rms_al[i], f40[i], f40_al[i] = rf, rp, ra, ff, fa
+    Wf.flush(); Wc.flush(); Wa.flush()
     np.savez_compressed(out / "windows_meta.npz", relpath=np.array(rel), machine=machine, op=op, tf=tf,
                         idx=idx, label=label, n_samples=n_len, crop_len=T_row, starts_full=st_full,
                         starts_crop=st_crop, band_full=band_full, band_crop=band_crop, rms_full=rms_full,
                         rms_prefix=rms_pre, feat40_prefix=f40, attr_edges=ATTR_EDGES, fs=FS, L=L, K=K,
-                        crop_frac=CROP_FRAC)
+                        crop_frac=CROP_FRAC, lag=lag, align_corr=AL["corr"], align_offset=off_al,
+                        align_len=T_al, starts_align=st_al, band_align=band_al, rms_align=rms_al,
+                        feat40_align=f40_al)
     lens = np.array([v["T"] / v["qual_median"] for v in crops.values()])
     print(f"{N} recordings, {len(crops)} cells, K={K} x L={L}; crop T/qual-median "
           f"{lens.min():.3f}-{lens.max():.3f}; capped cells "

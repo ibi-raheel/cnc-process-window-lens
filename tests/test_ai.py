@@ -20,7 +20,8 @@ from embed import fit_rows  # noqa: E402
 from stats import (boot_delta, cluster_bootstrap_auc, conformal_rank, conformal_threshold,  # noqa: E402
                    detection_at_far, eligible, exact_far, limit_with_fallback, max_of_n_far,
                    min_n_for_alpha, stratified_auc)
-from windows import (ATTR_EDGES, L, band_log_power, crop_lengths, cut, full_starts,  # noqa: E402
+from align import F as ENV_FRAME, best_lag, envelope  # noqa: E402
+from windows import (ATTR_EDGES, L, align_windows, band_log_power, crop_lengths, cut, full_starts,  # noqa: E402
                      label_of, prefix_starts, relpath, vec_rms)
 
 OUT = ROOT / "pipeline" / "out"
@@ -352,6 +353,39 @@ def test_truncation_does_not_change_prefix_windows_or_their_knn_score():
     assert s[0] == s[1]
 
 
+def _program(n, seed=21):
+    """A synthetic toolpath: amplitude steps every 0.5-3 s on three tones, so each phase differs."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(n) / 2000.0
+    edges = np.cumsum(rng.uniform(1000, 6000, 200)).astype(int)
+    amp = np.repeat(rng.uniform(0.2, 3.0, 201), np.diff(np.concatenate([[0], edges, [10 ** 9]])))[:n]
+    return np.stack([amp * np.sin(2 * np.pi * f * t) + 0.05 * rng.normal(size=n) for f in (60, 210, 480)], 1)
+
+
+def test_start_offset_is_recovered_from_the_envelope():
+    """A recording that starts 3 s into the program (a trimmed excerpt) is found 3 s late; the crop
+    arm would compare its prefix with another phase of the toolpath."""
+    p = _program(80_000)
+    tmpl = envelope(p)
+    for lag_s in (0.0, 0.5, 3.0, 11.0):
+        s = int(lag_s * 2000)
+        lag, r, _ = best_lag(envelope(p[s:s + 50_000]), tmpl, 40)
+        assert lag * ENV_FRAME == s and r > 0.99
+    assert not np.array_equal(cut(p, prefix_starts(20_000)), cut(p[6000:], prefix_starts(20_000)))
+
+
+def test_aligned_windows_cover_the_same_program_samples_for_trimmed_excerpts():
+    p = _program(80_000, seed=22)
+    lags = np.array([0, 0, 5600, 22_000, 300])
+    n = np.array([70_000, 66_000, 50_000, 40_000, 69_000])
+    cell = np.array(["c"] * 5)
+    off, T = align_windows(lags, n, cell, np.full(5, 30_000))
+    assert (off >= 0).all() and (off + T <= n).all() and len(set(T.tolist())) == 1
+    W = [cut(p[lg:lg + m], o + prefix_starts(int(t))) for lg, m, o, t in zip(lags, n, off, T)]
+    for w in W[1:]:
+        assert np.array_equal(w, W[0])
+
+
 def test_cut_removes_the_mean_per_window_and_axis():
     rng = np.random.default_rng(13)
     d = rng.normal(loc=[1.0, -2.0, 5.0], size=(5000, 3))
@@ -412,6 +446,11 @@ def test_real_windows_meta_matches_features_and_crop_is_consistent():
         assert (sc == sc[0]).all()
     assert (M["starts_crop"][:, -1] + int(M["L"]) <= M["crop_len"]).all()
     assert (M["crop_len"] <= M["n_samples"]).all()
+    # aligned arm: identical program-time window starts (recording start + lag) within each cell
+    prog = M["starts_align"] + M["lag"][:, None]
+    for c in np.unique(cell):
+        assert (prog[cell == c] == prog[cell == c][0]).all()
+    assert (M["starts_align"] >= 0).all() and (M["starts_align"][:, -1] + int(M["L"]) <= M["n_samples"]).all()
 
 
 @pytest.mark.skipif(not list(OUT.glob("emb_*_s*_M0*.npz")) or not (OUT / "windows_meta.npz").exists(),
@@ -442,8 +481,12 @@ def test_real_ai_results_reproduce_the_repo_and_respect_the_gate():
     assert (dec["headline_mode"] == "ai") == bool(dec["passed_heads"])
     for h in dec["passed_heads"]:
         assert all(s["pass"] for s in dec["by_seed"]["crop"][h])
+        assert all(s["pass"] for s in dec["by_seed"]["align"][h])
+    # the start-offset shortcut is measured and reported, and no bad file is screened by a good run's key
+    assert ai["regression"]["start_offset_auc"] > 0.9
+    assert ai["data"]["screened_recordings"] == 26
     # split-conformal limits hold their level inside the qualification period (random half splits)
-    for arm in ("crop", "full"):
+    for arm in ("crop", "full", "align"):
         for k, v in ai["arms"][arm]["seeds"]["0"]["drift_alpha_0.05"].items():
             assert v["in_period_far_split_half"] <= 0.055, (arm, k)
     # re-qualification rows report the guarantee they rely on

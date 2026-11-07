@@ -15,7 +15,7 @@ Per (arm, seed, fold) it writes out/emb_<arm>_s<seed>_<M>.npz with
   E_mean (N, 9996) float32: mean PPV over a recording's K windows   -> head A (ridge)
   E_win  (N, K, 64) float32: standardised, PCA-64 PPV of each window -> head B (kNN memory bank)
 
-Usage: python -I pipeline/embed.py pipeline/out [arm ...]   (arms: full crop; resumable)
+Usage: python -I pipeline/embed.py pipeline/out [arm ...]   (arms: crop full align; resumable)
 Set OMP_NUM_THREADS / NUMBA_NUM_THREADS to 4 and run under nice.
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ def main(out_dir: str, arms: list[str]):
     out = Path(out_dir)
     M = np.load(out / "windows_meta.npz")
     machine, tf, label = M["machine"], M["tf"], M["label"]
-    for arm in arms or ["crop", "full"]:
+    for arm in arms or ["crop", "full", "align"]:
         W = np.load(out / f"windows_{arm}.npy", mmap_mode="r")
         for seed in SEEDS:
             for fi, tgt in enumerate(MACHINES):
