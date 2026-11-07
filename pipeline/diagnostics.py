@@ -6,7 +6,6 @@ Usage: python -I pipeline/diagnostics.py pipeline/out/features.npz public/data/r
 from __future__ import annotations
 
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -19,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze import MACHINES, MIN_TRAIN, OPS, model_features, pick_train  # noqa: E402
 from features import TIMEFRAMES, feature_names, load, parse_name, welch_psd  # noqa: E402
 from spc import ALPHA, fit_pca, fit_shewhart  # noqa: E402
+from stats import ci, conformal_multiplier, stratified_auc, wilson  # noqa: E402,F401  (shared helpers)
 
 N_BOOT = 2000
 N_BOOT_RAMP = 500
@@ -29,39 +29,7 @@ SCREEN_MIN_OPS = 3   # ... in at least 3 operations of the same machine run
 
 
 # ---------------------------------------------------------------- small, tested helpers
-def wilson(k: int, n: int, z: float = 1.959964) -> dict:
-    """Wilson score interval for a binomial proportion k/n."""
-    if n == 0:
-        return {"rate": None, "lo": None, "hi": None, "k": 0, "n": 0}
-    p = k / n
-    den = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / den
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
-    return {"rate": p, "lo": max(0.0, c - h), "hi": min(1.0, c + h), "k": int(k), "n": int(n)}
-
-
-def conformal_multiplier(ratios: np.ndarray, alpha: float = ALPHA) -> float:
-    """Split-conformal quantile: the ceil((n+1)(1-alpha))-th smallest held-out ratio.
-    Scaling a limit by this value gives P(new ratio > limit) <= alpha under exchangeability."""
-    r = np.sort(np.asarray(ratios, float))
-    rank = math.ceil((len(r) + 1) * (1 - alpha))
-    return float(r[min(rank, len(r)) - 1])
-
-
-def stratified_auc(score: np.ndarray, y: np.ndarray, strata: np.ndarray) -> float:
-    """Probability a bad part outscores a good part from the same stratum (ties count 1/2)."""
-    num = den = 0.0
-    for s in np.unique(strata):
-        m = strata == s
-        b, g = score[m & (y == 1)], score[m & (y == 0)]
-        if len(b) == 0 or len(g) == 0:
-            continue
-        d = b[:, None] - g[None, :]
-        num += (d > 0).sum() + 0.5 * (d == 0).sum()
-        den += d.size
-    return float(num / den) if den else float("nan")
-
-
+# wilson, conformal_multiplier, stratified_auc and ci live in stats.py (shared with ai_eval.py).
 def sign_test_p(k: int, n: int) -> float:
     return float(stats.binomtest(k, n, 0.5).pvalue) if n else 1.0
 
@@ -141,12 +109,6 @@ def screen_runs(X9, machine, op, tf, label, seq, ratio=SCREEN_RATIO, min_ops=SCR
 
 def auc_pair(score, y):
     return float(roc_auc_score(y, score)) if 0 < y.sum() < len(y) else float("nan")
-
-
-def ci(v):
-    v = np.asarray(v, float)
-    v = v[~np.isnan(v)]
-    return [float(np.quantile(v, 0.025)), float(np.quantile(v, 0.975))]
 
 
 # ---------------------------------------------------------------- main analysis
