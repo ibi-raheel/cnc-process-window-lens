@@ -17,7 +17,8 @@ from detectors import (hier_shift, hier_shift_loo, knn_score, nearest_windows, r
                        ridge_head, shewhart_oos, shift_for)
 from drift import drift_share, label_alarm, shift_vectors, subspace, top_bands  # noqa: E402
 from embed import fit_rows  # noqa: E402
-from stats import (boot_delta, cluster_bootstrap_auc, conformal_rank, conformal_threshold,  # noqa: E402
+from stats import (boot_delta, cluster_bootstrap_auc, cluster_rate_ci, conformal_far_quantiles,  # noqa: E402
+                   conformal_rank, conformal_threshold,
                    detection_at_far, eligible, exact_far, limit_with_fallback, max_of_n_far,
                    min_n_for_alpha, stratified_auc)
 from align import F as ENV_FRAME, best_lag, envelope  # noqa: E402
@@ -91,6 +92,46 @@ def test_max_of_n_limit_false_alarm_is_one_over_n_plus_one(n):
     assert info["rule"] == "max_of_n" and lim == X[0, :n].max() and info["guarantee"] == pytest.approx(1 / (n + 1))
 
 
+def test_single_calibration_false_alarm_rate_follows_beta_by_simulation():
+    """The 4.76% at N = 20 is an average over calibration sets. One set's own rate is
+    1 - F(s_(k)) ~ Beta(N + 1 - k, k); for N = 20 that is Beta(1, 20): median 3.4%, 95th pct 13.9%."""
+    from scipy.stats import norm
+    q = conformal_far_quantiles(20, 0.05)
+    assert q["mean"] == pytest.approx(1 / 21)
+    assert q["0.5"] == pytest.approx(1 - 0.5 ** (1 / 20)) and q["0.95"] == pytest.approx(1 - 0.05 ** (1 / 20))
+    rng = np.random.default_rng(5)
+    lim = np.sort(rng.standard_normal((40_000, 20)), axis=1)[:, conformal_rank(20, 0.05) - 1]
+    far = norm.sf(lim)                                   # each calibration set's own false-alarm rate
+    assert far.mean() == pytest.approx(1 / 21, abs=0.002)
+    assert np.quantile(far, 0.5) == pytest.approx(q["0.5"], abs=0.003)
+    assert np.quantile(far, 0.95) == pytest.approx(q["0.95"], abs=0.005)
+    q10 = conformal_far_quantiles(10, 0.05)              # below N = 19: the max-of-N limit
+    assert q10["mean"] == pytest.approx(1 / 11)
+
+
+def test_recentred_leave_one_out_limit_keeps_its_guarantee_by_simulation():
+    """Re-qualification as in ai_eval.Requal: a machine-wide shift plus shrunk per-operation shifts
+    estimated from N = 20 new good parts spread over operations, the limit set on their leave-one-out
+    scores. Leave-one-out calibration is not split conformal, so 1/21 is not exact here: with
+    exchangeable Gaussian parts the rate is about 4.9% (15,000 trials: 4.92-4.94% +- 0.05%), just
+    above 1/21 = 4.76% and below 5%. The docs quote 4.76% as nominal for that reason."""
+    rng = np.random.default_rng(11)
+    ops = np.array(list("abcdefghij"))
+    trials, n_test, fa, tot = 3000, 40, 0, 0
+    for _ in range(trials):
+        shift = rng.normal(0, 2.0)                       # unknown step after the change
+        cn = rng.choice(ops, 20)
+        off = shift + rng.standard_normal(20)            # new parts' offsets from their op's old centre
+        d, per = hier_shift(off, cn)
+        cal = np.abs(off - hier_shift_loo(off, cn))
+        lim = conformal_threshold(cal, 0.05)
+        ct = rng.choice(ops, n_test)
+        test = np.abs(shift + rng.standard_normal(n_test) - shift_for(ct, d, per))
+        fa += int((test > lim).sum()); tot += n_test
+    se = math.sqrt(20 / (21 ** 2 * 22) / trials)         # spread of one calibration set's rate, Beta(1, 20)
+    assert 1 / 21 - 3 * se <= fa / tot <= 0.05 + 3 * se
+
+
 def test_limit_with_fallback_switches_to_conformal_at_19():
     lim, info = limit_with_fallback(np.arange(1, 20, dtype=float), 0.05)
     assert info["rule"] == "conformal" and lim == 19.0 and info["guarantee"] == pytest.approx(0.05)
@@ -139,6 +180,43 @@ def test_cluster_bootstrap_resamples_strata_not_parts():
     vals = set(np.round(res["a"]["boots"], 9).tolist())
     assert vals == {0.5, 0.75, 1.0}
     assert res["a"]["point"] == 0.75 and res["_design"]["resample"] == "whole strata"
+
+
+def test_cluster_bootstrap_can_resample_blocks_of_strata():
+    # strata 0 and 1 form block A (both AUC 1), stratum 2 is block B (AUC 0), 2 pairs each.
+    # Resampling blocks can only give 0 (B,B), 2/3 (A,B) or 1 (A,A); resampling strata could also
+    # give 1/3 or 1/2.
+    s = np.array([0, 0, 1, 0, 0, 1, 1, 1, 0.0])
+    y = np.array([0, 0, 1, 0, 0, 1, 0, 0, 1])
+    st = np.array([0, 0, 0, 1, 1, 1, 2, 2, 2])
+    blk = np.array([0, 0, 0, 0, 0, 0, 1, 1, 1])
+    res = cluster_bootstrap_auc({"a": s}, y, st, n_boot=2000, seed=0, clusters=blk)
+    assert set(np.round(res["a"]["boots"], 9).tolist()) == {0.0, round(2 / 3, 9), 1.0}
+    assert res["_design"]["n_units"] == 2 and res["_design"]["n_strata"] == 3
+    with pytest.raises(AssertionError):                  # strata must sit inside one block
+        cluster_bootstrap_auc({"a": s}, y, st, n_boot=10, clusters=np.arange(9) % 2)
+
+
+def test_detection_bootstrap_can_resample_whole_clusters():
+    rng = np.random.default_rng(3)
+    cl = np.repeat(np.arange(6), 15)
+    y = np.zeros(90, int)
+    y[[0, 1, 15, 30]] = 1                                # bad parts in clusters 0, 1, 2 only
+    s = rng.normal(size=90) + 3 * y
+    pt, bt = detection_at_far({"a": s, "b": s.copy()}, y, 0.1, n_boot=300, seed=0, clusters=cl)
+    pt0, _ = detection_at_far({"a": s}, y, 0.1, n_boot=10, seed=0)
+    assert pt["a"]["det"] == pt0["a"]["det"]             # the point estimate does not depend on clusters
+    ok = ~np.isnan(bt["a"])
+    assert ok.sum() > 250 and np.array_equal(bt["a"][ok], bt["b"][ok])
+    assert (~ok).sum() > 0                               # draws holding no bad cluster are dropped
+
+
+def test_cluster_rate_ci_resamples_groups():
+    r = cluster_rate_ci([1, 1, 1], [20, 20, 20])
+    assert r["rate"] == pytest.approx(0.05) and r["ci"] == pytest.approx([0.05, 0.05])
+    r = cluster_rate_ci([0, 0, 10], [50, 50, 50], n_boot=4000)
+    assert r["rate"] == pytest.approx(10 / 150) and r["group_max"] == 0.2 and r["group_median"] == 0.0
+    assert r["ci"][0] == 0.0 and r["ci"][1] == pytest.approx(0.2)   # all-zero and all-bad-group draws occur
 
 
 def test_paired_bootstrap_of_identical_scores_is_exactly_zero():
@@ -493,3 +571,18 @@ def test_real_ai_results_reproduce_the_repo_and_respect_the_gate():
     rows = ai["arms"]["crop"]["requal"]["first"]
     assert rows["N=5"]["rule"] == "max-of-N" and rows["N=5"]["guarantee"] == pytest.approx(1 / 6, abs=1e-4)
     assert rows["N=20"]["rule"] == "conformal" and rows["N=20"]["guarantee"] <= 0.05
+    # every part of a machine x period shares one re-qualified limit: the clustered interval over
+    # those groups is reported next to the Wilson one and is at least as wide
+    for arm in ("crop", "align"):
+        r20 = ai["arms"][arm]["requal"]["first"]["N=20"]
+        assert len(r20["groups"]) == r20["n_groups"]
+        for k, v in r20["detectors"].items():
+            fc, w = v["far_cluster"], v["far"]
+            assert fc["rate"] == pytest.approx(w["rate"], abs=1e-4)
+            assert fc["ci"][1] - fc["ci"][0] >= w["hi"] - w["lo"] - 1e-4, (arm, k)
+            assert sum(a for a, _ in v["far_by_group"]) == w["k"]
+        assert r20["single_requal_far_spread"]["0.95"] == pytest.approx(1 - 0.05 ** (1 / 20), abs=1e-4)
+    # the machine x timeframe sensitivity of the gate is exported for every arm, head and seed
+    sens = dec["sensitivity_machine_x_tf_clusters"]
+    for arm in ("crop", "align", "full"):
+        assert all(len(sens[arm][h]) == 3 for h in ("ridge", "knn"))

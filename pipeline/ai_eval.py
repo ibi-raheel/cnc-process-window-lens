@@ -51,7 +51,8 @@ from diagnostics import screen_runs  # noqa: E402
 from drift import (CUT, K_DRIFT, band_names, band_vectors, cell_z, drift_share, label_alarm,  # noqa: E402
                    shift_vectors, subspace, top_bands)
 from features import FS, TIMEFRAMES  # noqa: E402
-from stats import (boot_delta, ci, cluster_bootstrap_auc, conformal_multiplier, conformal_threshold,  # noqa: E402
+from stats import (boot_delta, ci, cluster_bootstrap_auc, cluster_rate_ci, conformal_far_quantiles,  # noqa: E402
+                   conformal_multiplier, conformal_threshold,
                    detection_at_far, eligible, exact_far, limit_with_fallback, max_of_n_far, mcnemar_exact,
                    min_n_for_alpha, part_bootstrap_auc, pooled_ap, strata_ids, stratified_auc, wilson)
 
@@ -290,6 +291,24 @@ def gate(D: Data, S: dict, U: dict, arm: str) -> dict:
                            "B_delta_det": B, "B_pass": bool(B["ci"][0] > 0)}
         out["heads"][h]["pass"] = out["heads"][h]["A_pass"] and out["heads"][h]["B_pass"]
     out["detection_at_far"] = pt
+    # Sensitivity, reported but not part of the pre-declared decision: the operations of one machine
+    # in one timeframe share a production episode (bad files come in 11 machine x timeframe groups,
+    # numbered 000-002 across 1-10 operations), so strata and later parts are not independent.
+    # Re-run both conditions resampling whole machine x timeframe blocks.
+    el = np.zeros(D.n, bool)
+    sub = np.where(D.in_scope)[0]
+    el[sub[eligible(D.mot[sub], D.label[sub])]] = True
+    keys = [*HEADS, *best]
+    cres = cluster_bootstrap_auc({k: S[k][el] for k in keys}, D.label[el], D.mot[el], N_BOOT, 0, clusters=D.mt[el])
+    cpt, cbt = detection_at_far({k: U[k][lat] for k in [*HEADS, *rms_set]}, D.label[lat], GATE_FAR, N_BOOT, 0,
+                                clusters=D.mt[lat])
+    for h in HEADS:
+        A = boot_delta(cres[h]["point"], cres[h]["boots"], [cres[b]["point"] for b in best], [cres[b]["boots"] for b in best])
+        B = boot_delta(cpt[h]["det"], cbt[h], [cpt[b]["det"] for b in rms_set], [cbt[b] for b in rms_set])
+        out["heads"][h]["machine_x_tf_clusters"] = {
+            "n_clusters_auc": cres["_design"]["n_units"], "n_clusters_later": int(len(np.unique(D.mt[lat]))),
+            "n_clusters_later_with_bad": int(len(np.unique(D.mt[lat & (D.label == 1)]))),
+            "A_delta_auc": A, "A_pass": bool(A["ci"][0] > 0), "B_delta_det": B, "B_pass": bool(B["ci"][0] > 0)}
     return out
 
 
@@ -436,6 +455,7 @@ def requal_curve(D: Data, S: dict, arm: str, cls: dict, out: Path, seed: int, ex
             for r in range(draws):
                 rng = np.random.default_rng([seed, N, r])
                 tally = {k: [0, 0, 0, 0] for k in REQ_DETS}
+                per_group = {k: [] for k in REQ_DETS}
                 parts = {k: [] for k in REQ_DETS}
                 hits = {k: [] for k in REQ_DETS}
                 Y, T = [], []
@@ -460,6 +480,8 @@ def requal_curve(D: Data, S: dict, arm: str, cls: dict, out: Path, seed: int, ex
                         al = sc[k] > lim[k]
                         tally[k][0] += int(al[yy == 0].sum()); tally[k][1] += int((yy == 0).sum())
                         tally[k][2] += int(al[yy == 1].sum()); tally[k][3] += int((yy == 1).sum())
+                        per_group[k].append((int(al[yy == 0].sum()), int((yy == 0).sum()),
+                                             int(al[yy == 1].sum()), int((yy == 1).sum())))
                         parts[k].append(sc[k])
                         hits[k].append(al)
                     Y.append(yy); T.append(D.mot[rows])
@@ -474,12 +496,20 @@ def requal_curve(D: Data, S: dict, arm: str, cls: dict, out: Path, seed: int, ex
                    "rule": "static 2019 limit" if N == 0 else ("conformal" if N >= min_n_for_alpha(ALPHA) else "max-of-N"),
                    "guarantee": None if N == 0 else (exact_far(N, ALPHA) if N >= min_n_for_alpha(ALPHA) else max_of_n_far(N)),
                    "n_good_eval": int(acc["rms"]["ng"] / draws), "n_bad_eval": int(acc["rms"]["nb"] / draws), "detectors": {}}
+            if N > 0:
+                # what ONE re-qualification on N exchangeable parts delivers (the guarantee is its mean)
+                row["single_requal_far_spread"] = conformal_far_quantiles(N, ALPHA)
             if draws == 1:   # one fixed set of parts: paired tests of detection at each chart's own limit
                 row["paired_detection"] = paired_detection({k: np.concatenate(v) for k, v in hits.items()}, Y, seed, N)
+                # every part of a machine x period shares one limit, so the honest unit is the group
+                row["groups"] = [{"machine": m, "tf": TIMEFRAMES[t]} for m, t, _, _ in use]
             for k in REQ_DETS:
                 a = acc[k]
                 if draws == 1:
-                    row["detectors"][k] = {"far": wilson(a["fa"], a["ng"]), "det": wilson(a["da"], a["nb"]), "auc": a["auc"][0]}
+                    pg = np.array(per_group[k])
+                    row["detectors"][k] = {"far": wilson(a["fa"], a["ng"]), "det": wilson(a["da"], a["nb"]), "auc": a["auc"][0],
+                                           "far_cluster": cluster_rate_ci(pg[:, 0], pg[:, 1], seed=N),
+                                           "far_by_group": pg[:, 0:2].tolist(), "det_by_group": pg[:, 2:4].tolist()}
                 else:
                     row["detectors"][k] = {"far": {"rate": float(np.mean(a["far"])), "range": ci(a["far"])},
                                            "det": {"rate": float(np.nanmean(a["det"])), "range": ci(a["det"])},
@@ -873,6 +903,11 @@ def main(out_dir: str, results_path: str):
                      "headline_mode": "ai" if passed else "fallback_label_free_requalification",
                      "rule": "a head passes when conditions A and B hold for all 3 seeds in the crop arm (pre-declared) "
                              "and in the program-aligned arm (added after the start-offset shortcut was found)",
+                     "sensitivity_machine_x_tf_clusters": {
+                         "note": "not part of the pre-declared rule: both conditions re-run resampling whole machine x "
+                                 "timeframe blocks instead of strata / parts",
+                         **{arm: {h: [{c: arms[arm]["seeds"][s]["gate"]["heads"][h]["machine_x_tf_clusters"][c]
+                                       for c in ("A_pass", "B_pass")} for s in SEEDS] for h in HEADS} for arm in ARMS}},
                      "by_seed": {arm: {h: [{k: arms[arm]["seeds"][s]["gate"]["heads"][h][k]
                                             for k in ("auc", "best_classical_auc", "best_classical_name", "A_delta_auc",
                                                       "A_pass", "det_at_far",

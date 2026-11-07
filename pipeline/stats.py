@@ -134,16 +134,32 @@ def _pair_matrices(score, y, strata, keys):
             for s in keys]
 
 
-def cluster_bootstrap_auc(scores: dict, y, strata, n_boot: int = 2000, seed: int = 0) -> dict:
+def cluster_bootstrap_auc(scores: dict, y, strata, n_boot: int = 2000, seed: int = 0, clusters=None) -> dict:
     """Within-stratum AUC per scorer plus replicates from resampling whole strata with replacement.
     The same resamples are used for every scorer, so replicate-wise differences are paired.
-    Only strata holding both classes are used (pass eligible parts)."""
+    Only strata holding both classes are used (pass eligible parts).
+    With `clusters` (one id per part, constant within a stratum), whole clusters of strata are
+    resampled instead, e.g. machine x timeframe blocks, whose operations share one production episode."""
     y = np.asarray(y)
     strata = np.asarray(strata)
     keys = [s for s in np.unique(strata) if (y[strata == s] == 1).any() and (y[strata == s] == 0).any()]
     rng = np.random.default_rng(seed)
     S = len(keys)
-    W = np.stack([np.bincount(rng.integers(0, S, S), minlength=S) for _ in range(n_boot)]).astype(float)
+    if clusters is None:
+        W = np.stack([np.bincount(rng.integers(0, S, S), minlength=S) for _ in range(n_boot)]).astype(float)
+        n_units, unit = S, "whole strata"
+    else:
+        clusters = np.asarray(clusters)
+        of = []
+        for k in keys:
+            c = np.unique(clusters[strata == k])
+            assert len(c) == 1, "strata must be nested in clusters"
+            of.append(c[0])
+        ucl, cidx = np.unique(np.array(of), return_inverse=True)
+        C = len(ucl)
+        Wc = np.stack([np.bincount(rng.integers(0, C, C), minlength=C) for _ in range(n_boot)]).astype(float)
+        W = Wc[:, cidx]
+        n_units, unit = C, "whole clusters of strata"
     out = {}
     for name, s in scores.items():
         s = np.asarray(s, float)
@@ -151,7 +167,7 @@ def cluster_bootstrap_auc(scores: dict, y, strata, n_boot: int = 2000, seed: int
         num = np.array([m.sum() for m in mats])
         den = np.array([m.size for m in mats], float)
         out[name] = {"point": float(num.sum() / den.sum()), "boots": (W @ num) / (W @ den)}
-    out["_design"] = {"n_strata": S, "n_boot": n_boot, "resample": "whole strata"}
+    out["_design"] = {"n_strata": S, "n_units": n_units, "n_boot": n_boot, "resample": unit}
     return out
 
 
@@ -224,12 +240,39 @@ def mcnemar_exact(a, b) -> dict:
     return {"a_only": n10, "b_only": n01, "both": int((a & b).sum()), "neither": int((~a & ~b).sum()), "p": p}
 
 
+# ---------------------------------------------------------------- clustered rates
+def cluster_rate_ci(k, n, n_boot: int = 4000, seed: int = 0) -> dict:
+    """Pooled rate sum(k)/sum(n) over groups, with a percentile CI from resampling whole groups.
+    Use when every part of a group shares one limit (e.g. one re-qualification per machine x period),
+    so parts are not independent and a Wilson interval on the pooled count is too narrow."""
+    k, n = np.asarray(k, float), np.asarray(n, float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(k), (n_boot, len(k)))
+    den = n[idx].sum(axis=1)
+    boots = np.where(den > 0, k[idx].sum(axis=1) / np.where(den > 0, den, 1), np.nan)
+    r = k / np.where(n > 0, n, np.nan)
+    return {"rate": float(k.sum() / n.sum()) if n.sum() else None, "ci": ci(boots), "n_groups": int(len(k)),
+            "group_min": float(np.nanmin(r)), "group_median": float(np.nanmedian(r)), "group_max": float(np.nanmax(r))}
+
+
+def conformal_far_quantiles(n: int, alpha: float, q=(0.05, 0.5, 0.95)) -> dict | None:
+    """Spread of the false-alarm rate that ONE calibration set of n exchangeable continuous scores
+    actually delivers. With limit s_(k), the rate is 1 - F(s_(k)) ~ Beta(n + 1 - k, k): its mean is the
+    marginal guarantee 1 - k/(n+1), but a single re-qualification can land well above it.
+    Below the minimum n the max-of-N limit (k = n) is used."""
+    from scipy.stats import beta
+    k = min(conformal_rank(n, alpha), n)
+    return {"mean": 1.0 - k / (n + 1), **{str(p): float(beta.ppf(p, n + 1 - k, k)) for p in q}}
+
+
 # ---------------------------------------------------------------- operating points
-def detection_at_far(scores: dict, y, far: float, n_boot: int = 2000, seed: int = 0) -> tuple[dict, dict]:
+def detection_at_far(scores: dict, y, far: float, n_boot: int = 2000, seed: int = 0,
+                     clusters=None) -> tuple[dict, dict]:
     """Each scorer's threshold is set so it flags the same fraction `far` of the good parts;
     detection is measured on the bad parts. Bootstrap: good and bad parts resampled independently,
     thresholds re-estimated in every replicate, identical resamples for every scorer (paired).
-    Returns (point estimates, detection replicates)."""
+    With `clusters`, whole clusters (good and bad parts together) are resampled instead; replicates
+    that draw no bad part are dropped. Returns (point estimates, detection replicates)."""
     y = np.asarray(y)
     g, b = np.where(y == 0)[0], np.where(y == 1)[0]
     rng = np.random.default_rng(seed)
@@ -238,8 +281,20 @@ def detection_at_far(scores: dict, y, far: float, n_boot: int = 2000, seed: int 
         thr = np.quantile(s[g], 1 - far)
         point[k] = {"far_target": far, "far": float(np.mean(s[g] > thr)), "det": float(np.mean(s[b] > thr)),
                     "k_det": int(np.sum(s[b] > thr)), "n_bad": int(len(b)), "n_good": int(len(g))}
+    if clusters is not None:
+        clusters = np.asarray(clusters)
+        ucl = np.unique(clusters)
+        members = [np.where(clusters == c)[0] for c in ucl]
     for i in range(n_boot):
-        gi, bi = rng.choice(g, len(g)), rng.choice(b, len(b))
+        if clusters is None:
+            gi, bi = rng.choice(g, len(g)), rng.choice(b, len(b))
+        else:
+            ii = np.concatenate([members[j] for j in rng.integers(0, len(ucl), len(ucl))])
+            gi, bi = ii[y[ii] == 0], ii[y[ii] == 1]
+            if len(bi) == 0 or len(gi) == 0:
+                for k in scores:
+                    boots[k][i] = np.nan
+                continue
         for k, s in scores.items():
             boots[k][i] = np.mean(s[bi] > np.quantile(s[gi], 1 - far))
     for k in scores:
