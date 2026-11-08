@@ -73,8 +73,8 @@ function Story({ r }: { r: Results }) {
             <p className="tb-eyebrow">CNC Process-Window Lens</p>
             <h1>New machine, or a tool, fixture or spindle change: how many good parts before you can trust its limits again?</h1>
             <p>
-              <strong>About 20.</strong> Limits copied to a sister machine flagged {pct(r.ramp.copy.far.rate, 0)} of good parts, and two-year-old limits flagged{' '}
-              {staleRange(r)}. Re-fitted on the first 20 good parts after a change, every chart came back to about 5%.
+              <strong>About 20.</strong> Copy the chart, not the limits: re-fit it on the first 20 good parts after the change. Copied limits flagged{' '}
+              {pct(r.ramp.copy.far.rate, 0)} of good parts; re-fitted, every chart came back close to the 5% design rate.
             </p>
             <a className="tb-cta" href="#solution">Here's the playbook <span aria-hidden="true">→</span></a>
             <p className="tb-fine">{r.dataset.n_recordings.toLocaleString()} real production recordings · 3 CNC mills · 2019–2021 · public Bosch dataset, <span style={{ whiteSpace: 'nowrap' }}>CC BY 4.0</span></p>
@@ -142,12 +142,6 @@ function Story({ r }: { r: Results }) {
       </footer>
     </>
   )
-}
-
-/* 2019 limits on later good parts, start-anchored prefix arm (the README's 16–80%). */
-function staleRange(r: Results) {
-  const v = DETS.map((d) => r.ai.arms.crop.seeds['0']['drift_alpha_0.05'][d.key].far_later.rate)
-  return `${pct(Math.min(...v), 0).replace('%', '')}–${pct(Math.max(...v), 0)}`
 }
 
 /* Three measured findings, read straight from results.json, so the answer is on the first screen. */
@@ -866,7 +860,7 @@ function StepSolution() {
       <Plate
         flush
         head={[['Fig. 9', 'Re-qualification recipe'], ['Trigger', 'new machine · supplier · tool, fixture, spindle'], ['Playbook', 'SOLUTION.md']]}
-        foot={<><span>Built on public production data. In week 1 on a real line: one machine's history in, this recipe with its numbers out.</span><span><a href="https://ibiraheel.com">ibiraheel.com</a></span></>}
+        foot={<><span>Measured on public production data, not yet on your line. Week 1: replay one of your machines' history and get this recipe back with its own numbers.</span><span><a href="https://ibiraheel.com">ibiraheel.com</a></span></>}
       >
         <div className="split" style={{ borderTop: 0 }}>
           <div>
@@ -879,10 +873,10 @@ function StepSolution() {
           </div>
           <div>
             <p className="subhead">The tool</p>
-            <pre className="cmd"><code>requalify --lead &lt;lead machine&gt; --new &lt;new machine&gt; --n 20</code></pre>
-            <p className="cmd-out">Returns, per operation:</p>
+            <pre className="cmd"><code>{'requalify \\\n  --lead <lead machine> \\\n  --new <new machine> \\\n  --n 20'}</code></pre>
+            <p className="cmd-out">Returns:</p>
             <ul className="tool-out">{TOOL_OUT.map((l) => <li key={l}>{l}</li>)}</ul>
-            <p className="cmd-note">A thin wrapper over the tested pipeline. It replays the published 20-part RMS row exactly: 24 false alarms on 542 good parts.</p>
+            <p className="cmd-note">A thin wrapper over the tested pipeline. It replays the published 20-part RMS row (prefix windows) exactly: 24 false alarms on 542 good parts.</p>
           </div>
         </div>
       </Plate>

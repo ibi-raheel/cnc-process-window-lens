@@ -15,7 +15,7 @@
 | 2019 limits on the 762 good parts made later | **16–80%**, by chart (93% on program-aligned windows) | 5% |
 | Re-centred on the first 20 good parts after a change, split-conformal limit | **1.5–5.4%** pooled over 11 machine × periods (2.0–6.6% on aligned windows) | 4.76% |
 
-Pooled over re-qualifications the 20-part limit holds, but one re-qualification scatters: 0% to 29% per machine × period here, and even for ideal data the 95th percentile of a single 20-part limit is 13.9%.
+Here "after a change" is the start of each later production period on a machine: the public data has no maintenance log, so the periods stand in for change events. Pooled over re-qualifications the 20-part limit holds, but one re-qualification scatters: 0% to 29% per machine × period here, and even for ideal data the 95th percentile of a single 20-part limit is 13.9%.
 
 ## The recipe
 
@@ -41,7 +41,7 @@ Pooled over re-qualifications the 20-part limit holds, but one re-qualification 
 | Isolated alarm | u = score ÷ limit > 1 on an operation that is not part of a machine-wide shift | investigate, starting from the band with the largest |z| |
 
 ### What the AI adds, honestly
-A label-free MiniRocket nearest-neighbour model of good windows needs no defect history: append confirmed-good parts, no retraining. On program-aligned windows it ranks bad parts at AUC 0.962–0.972 over 3 seeds, against 0.960 for the best classical chart. That matches the best chart; it does not beat it, and the gate declared before the first run was not passed. On a new machine it caught 13 of 24 bad parts where the copied RMS chart caught 0 (p = 0.0002), but only 6 of 27 against 2 on the other machine (p = 0.13). Treat it as a candidate chart for a new machine, not a proven one.
+A label-free MiniRocket nearest-neighbour model of good windows needs no defect history: append confirmed-good parts, no retraining. On program-aligned windows it ranks bad parts at AUC 0.962–0.972 over 3 seeds, against 0.960 for the best classical chart. That matches the best chart; it does not beat it, and the gate declared before the first run was not passed. On a new machine it caught 13 of 24 bad parts where the re-centred RMS copy caught 0 (p = 0.0002), but only 6 of 27 against 2 on the other machine (p = 0.13). Treat it as a candidate chart for a new machine, not a proven one.
 
 ### What it costs
 At an assumed 15 minutes of triage per alarm, per 1,000 good parts: a copied baseline costs about 172 engineer-hours; re-centring and re-scaling on the first 10 parts costs 19 h. The triage time is an assumption; the false-alarm rates are measured.
