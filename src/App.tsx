@@ -83,6 +83,7 @@ function Story({ r }: { r: Results }) {
             <div className="field"><dt>Sensor</dt><dd>3-axis accel., 2&nbsp;kHz</dd></div>
             <div className="field"><dt>Limits</dt><dd>split-conformal, 5%</dd></div>
           </dl>
+          <Findings r={r} />
         </div>
         <Trace rec={good} title={`One recording · ${r.example.machine} · ${r.example.op} · ${TF_LABEL(good.tf)} · good part · ${good.duration_s.toFixed(1)} s`} />
       </header>
@@ -135,6 +136,32 @@ function Story({ r }: { r: Results }) {
         <p className="end">More work at <a href="https://ibiraheel.com">ibiraheel.com</a></p>
       </footer>
     </>
+  )
+}
+
+/* Three measured findings, read straight from results.json, so the answer is on the first screen. */
+function Findings({ r }: { r: Results }) {
+  const stale = DETS.map((d) => r.ai.arms.align.seeds['0']['drift_alpha_0.05'][d.key].far_later.rate)
+  const req = r.ai.arms.align.requal.first['N=20']
+  const reqRates = DETS.map((d) => req.detectors[d.key].far.k / req.detectors[d.key].far.n)
+  const rows = [
+    { n: 2, id: 'stale', what: `Qualified 2019 limits, on the ${r.ai.arms.align.seeds['0']['drift_alpha_0.05'].rms.far_later.n} good parts made later`, v: `${pct(Math.min(...stale), 0)}–${pct(Math.max(...stale), 0)}`, vs: 'of good parts flagged · design 5%', bad: true },
+    { n: 3, id: 'copy', what: 'A qualified baseline copied to a sister machine', v: pct(r.ramp.copy.far.rate), vs: 'of good parts flagged · design 1%', bad: true },
+    { n: 6, id: 'requal', what: 'Limits re-qualified on the first 20 good parts', v: `${pct(Math.min(...reqRates))}–${pct(Math.max(...reqRates))}`, vs: `of good parts flagged · promised ${pct(req.guarantee ?? 0.0476, 2)}` },
+  ]
+  return (
+    <ol className="tb-find" aria-label="Findings: share of good parts flagged as false alarms">
+      {rows.map((x) => (
+        <li key={x.id}>
+          <a href={`#${x.id}`}>
+            <span className="box" aria-hidden="true">{x.n}</span>
+            <span className="what">{x.what}</span>
+            <span className={`v${x.bad ? ' sig' : ''}`}>{x.v}</span>
+            <span className="vs">{x.vs}</span>
+          </a>
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -586,7 +613,7 @@ function VerdictDetails({ r }: { r: Results }) {
 /* ============ 6 ============ */
 const NS = [0, 5, 10, 19, 20, 50]
 function StepRequal({ r }: { r: Results }) {
-  const [ni, setNi] = useState(0)
+  const [ni, setNi] = useState(NS.indexOf(20))
   const N = NS[ni]
   const row = r.ai.arms.align.requal.first[`N=${N}`]
   const g = guarantee(N)
@@ -595,7 +622,7 @@ function StepRequal({ r }: { r: Results }) {
   return (
     <section className="step" id="requal">
       <StepHead n={6} title="Re-qualify, don't copy">
-        <p>After a change, take the first N confirmed-good parts and recalibrate each chart's limit. <strong>Drag N:</strong> by about 20 parts every chart is back near the 4.76% the conformal rule promises on average.</p>
+        <p>After a change, take the first N confirmed-good parts and recalibrate each chart's limit. By about 20 parts every chart is back near the 4.76% the conformal rule promises on average. <strong>Drag N to 0</strong> to see the stale limits again.</p>
       </StepHead>
       <div className="controls">
         <div className="ctl" style={{ width: 'min(560px, 100%)' }}>
@@ -737,7 +764,7 @@ function StepCost({ r }: { r: Results }) {
             </div>
           ))}
           <div className="rq-sp" />
-          <div className="rq-axis" style={{ borderBottom: 0, borderTop: '1px solid var(--ink)', height: 24 }}>
+          <div className="rq-axis lin" style={{ borderBottom: 0, borderTop: '1px solid var(--ink)', height: 24 }}>
             {ticks.map((v, i) => <span key={v} style={{ left: `${(100 * v) / max}%`, bottom: 'auto', top: 6, transform: i === 0 ? 'none' : i === ticks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)' }}>{i === ticks.length - 1 ? `${v} h` : v}</span>)}
           </div>
           <div className="rq-sp" />

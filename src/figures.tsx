@@ -475,7 +475,9 @@ export function Spectrum({ a }: { a: Alarm }) {
           {[10, 20, 50, 100, 200, 500, 1000].map((f) => (
             <g key={f}>
               <line className="base" x1={lx(f)} x2={lx(f)} y1={h - mB + 4} y2={h - mB + 8} />
-              <text x={lx(f)} y={h - 6} textAnchor={f === 1000 ? 'end' : f === 10 ? 'start' : 'middle'}>{f === 1000 ? '1 kHz' : f === 10 ? '10 Hz' : f}</text>
+              {(w >= 440 || (f !== 20 && f !== 500)) && (
+                <text x={lx(f)} y={h - 6} textAnchor={f === 1000 ? 'end' : f === 10 ? 'start' : 'middle'}>{f === 1000 ? '1 kHz' : f === 10 ? '10 Hz' : f}</text>
+              )}
             </g>
           ))}
         </g>
