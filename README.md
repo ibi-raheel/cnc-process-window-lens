@@ -1,6 +1,15 @@
 # CNC process-window lens
 
-How fast does a CNC operation's vibration baseline go stale, why, how many parts does a new or drifted machine need before its limits can be trusted, and does an AI model add anything once the easy shortcuts are removed? Measured on two and a half years of real production data (Feb 2019 to Aug 2021) from three milling machines.
+**Research question.** A CNC operation moves to a new machine, or comes back from a tool, fixture or spindle change. How many good parts do you need before its control limits can be trusted again, and how do you tell harmless drift from a real process change?
+
+**Answer: about 20. Re-qualify, don't copy.** On 1,702 real production recordings from three CNC mills (Feb 2019 to Aug 2021):
+- Limits copied unchanged to a sister machine flagged **68.9%** of good parts (design rate 1%). Re-centring and re-scaling the copied chart on 10 of the new machine's parts per operation brought that to 7.6% (3.0% with 10 random parts).
+- Limits set in 2019 flagged **16–80%** of the good parts made later, depending on the chart (design rate 5%).
+- Re-fitted on the **first 20 good parts after a change**, every chart came back to **1.5–5.4%** pooled over 11 machine × periods (2.0–6.6% on program-aligned windows), against a nominal 4.76%. Below 19 parts no 5% limit exists: 10 parts buy 9%.
+- When the same band moves on most operations of one machine, it is one re-baseline, not many investigations: on one mill, x-axis 100–178 Hz power rose a median 5.2σ in 13 of 13 operations (sign test p = 2.4×10⁻⁴).
+- A label-free AI fingerprint that never sees a bad part ranks bad parts as well as the best classical chart (AUC 0.962–0.972 over 3 seeds against 0.960). It does not beat it. The free cycle-time chart is kept as an honest baseline only: in this dataset recording length encodes how the files were cut.
+
+**The solution:** [SOLUTION.md](SOLUTION.md) is the one-page new-machine and supplier re-qualification recipe, its decision rules and thresholds, a week-1 plan for a real line, and the `requalify` tool (`pipeline/requalify.py`): feed it the lead machine's qualification recordings and the first N good parts from the new or changed machine, and it returns calibrated limits, what N actually buys, a ranked alarm queue with the band that moved, and a machine-wide or isolated call.
 
 **Live demo:** DEMO_URL_PLACEHOLDER
 
@@ -59,7 +68,8 @@ The current web page shows interim results tables; every number above is exporte
 - `pipeline/stats.py`: split-conformal limits with their finite-sample bound, the spread of a single calibration's false-alarm rate and the max-of-N fallback, stratified AUC, cluster bootstraps over strata or machine × timeframe blocks, paired bootstraps, Wilson intervals and the McNemar test (shared by diagnostics and the AI evaluation)
 - `pipeline/drift.py`: the forward-in-time drift subspace and per-(axis, band) attribution
 - `pipeline/ai_eval.py`: the gate, scorecards, drift, the re-qualification curve, the new-machine test and the per-alarm drill-down, written to static JSON
-- `tests/`: 72 pytest checks, including the conformal guarantee by simulation (also for the re-centred, leave-one-out re-qualification), hand-checked limits, leakage guards, the duration-crop and alignment logic and regression against the repo's own numbers
+- `pipeline/requalify.py`: the re-qualification recipe as a command-line tool, a thin wrapper over the functions above (see SOLUTION.md)
+- `tests/`: 77 pytest checks, including the conformal guarantee by simulation (also for the re-centred, leave-one-out re-qualification), hand-checked limits, leakage guards, the duration-crop and alignment logic and regression against the repo's own numbers
 - `METHOD.md`: equations, assumptions, validation, results and limitations
 
 No API keys or GPU: the page reads precomputed JSON.

@@ -1,5 +1,10 @@
 # Method
 
+## Research question
+A CNC operation moves to a new machine or a second supplier, or comes back from a tool, fixture or spindle change. How many good parts are needed before its control limits can be trusted again, and how do you tell harmless drift from a real process change?
+
+**Measured answer.** About 20. Limits copied unchanged to a sister machine flagged 68.9% of good parts (Results 4), and limits set in 2019 flagged 16–80% of later good parts (AI results 8). Re-centring on the first 20 good parts after a change, with a split-conformal limit, brought every chart back to 1.5–5.4% pooled over 11 machine × periods (2.0–6.6% on aligned windows for the single charts), against a nominal 4.76% (AI results 9). Below 19 parts no 5% limit exists. A shift that hits most operations of one machine at once calls for one re-baseline (sign test). The recipe and the `requalify` tool that applies it are in SOLUTION.md.
+
 ## Question
 A per-operation vibration baseline is set once, when a CNC process is qualified. On real production data, how fast does it go stale, what happens when one machine's baseline is copied to another, and does a multivariate or ML detector beat a plain RMS control chart? Stages 5 and 6 add a modern time-series model (MiniRocket) with a supervised and a label-free head, and ask whether it adds anything once the obvious shortcuts are removed: bad recordings in this dataset are trimmed excerpts, shorter than good ones and starting later in the program.
 
@@ -438,5 +443,5 @@ nice -n 10 .venv/bin/python -I pipeline/align.py $DATA pipeline/out        # sta
 nice -n 10 .venv/bin/python -I pipeline/windows.py $DATA pipeline/out      # about 20 s; 1.5 GB of windows in pipeline/out
 nice -n 10 .venv/bin/python -I pipeline/embed.py pipeline/out crop full align   # 3 arms x 3 seeds x 3 folds, about 23 min on CPU
 nice -n 10 .venv/bin/python -I pipeline/ai_eval.py pipeline/out public/data/results.json   # about 2.5 min
-.venv/bin/python -m pytest -q tests                                      # 72 tests
+.venv/bin/python -m pytest -q tests                                      # 77 tests
 ```
