@@ -183,7 +183,7 @@ export function ControlChart({ r, cell, det, upTo, tip }: { r: Results; cell: st
             <text x={x0[i] + (slots[i] * unit) / 2} y={h - mB + 22} textAnchor="middle" style={{ fill: i <= upTo ? 'var(--ink-2)' : 'var(--hair)' }}>
               {w < 560 ? `${t[0]} '${t.slice(-2)}` : TF_LABEL(t)}
             </text>
-            {counts[i] === 0 && <text x={x0[i] + (slots[i] * unit) / 2} y={Y(0) + 4} textAnchor="middle">–</text>}
+            {counts[i] === 0 && <rect x={x0[i]} y={mT} width={slots[i] * unit} height={ih} fill="url(#hatch)"><title>No recordings for this operation in {TF_LABEL(t)}</title></rect>}
           </g>
         ))}
         {/* points */}
@@ -374,8 +374,8 @@ export function CmmRows({ a }: { a: Alarm }) {
 export function AlarmStrip({ alarms, sel, onSel, tip }: { alarms: Alarm[]; sel: number; onSel: (row: number) => void; tip: ShowTip }) {
   const [ref, w] = useWidth<HTMLDivElement>(800)
   const rows = [
-    { key: 0, title: w < 560 ? 'Good parts flagged' : 'Good parts flagged (the 40 strongest false alarms)', items: alarms.filter((a) => a.label === 0) },
-    { key: 1, title: w < 560 ? 'Bad parts, later' : 'Bad parts made after qualification', items: alarms.filter((a) => a.label === 1) },
+    { key: 0, title: w < 560 ? 'False alarms' : 'Good parts flagged (the 40 strongest false alarms)', items: alarms.filter((a) => a.label === 0) },
+    { key: 1, title: w < 560 ? 'Bad parts' : 'Bad parts made after qualification', items: alarms.filter((a) => a.label === 1) },
   ]
   const nar = w < 560
   const mL = 8, mR = 8, rowH = 64, mT = 34

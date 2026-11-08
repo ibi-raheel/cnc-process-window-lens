@@ -147,7 +147,7 @@ function Findings({ r }: { r: Results }) {
   const rows = [
     { n: 2, id: 'stale', what: `Qualified 2019 limits, on the ${r.ai.arms.align.seeds['0']['drift_alpha_0.05'].rms.far_later.n} good parts made later`, v: `${pct(Math.min(...stale), 0)}–${pct(Math.max(...stale), 0)}`, vs: 'of good parts flagged · design 5%', bad: true },
     { n: 3, id: 'copy', what: 'A qualified baseline copied to a sister machine', v: pct(r.ramp.copy.far.rate), vs: 'of good parts flagged · design 1%', bad: true },
-    { n: 6, id: 'requal', what: 'Limits re-qualified on the first 20 good parts', v: `${pct(Math.min(...reqRates))}–${pct(Math.max(...reqRates))}`, vs: `of good parts flagged · promised ${pct(req.guarantee ?? 0.0476, 2)}` },
+    { n: 6, id: 'requal', what: 'Limits re-qualified on the first 20 good parts', v: `${pct(Math.min(...reqRates))}–${pct(Math.max(...reqRates))}`, vs: `of good parts flagged · promised\u00a0${pct(req.guarantee ?? 0.0476, 2)}` },
   ]
   return (
     <ol className="tb-find" aria-label="Findings: share of good parts flagged as false alarms">
@@ -677,7 +677,7 @@ function StepRequal({ r }: { r: Results }) {
         </div>
         <div className="legend" style={{ marginTop: 12, marginBottom: 0 }}>
           <span><svg width="14" height="12"><path d="M7 0v12" stroke="var(--ink)" strokeWidth="1.5" strokeDasharray="3 2" /></svg>nominal rate</span>
-          <span><i className="sw" style={{ background: 'var(--tol)', border: '1px solid var(--hair)' }} />where one re-qualification lands, 5–95%</span>
+          <span><i className="sw" style={{ background: 'var(--tol)', border: '1px solid var(--hair)' }} />where one re-qualification lands, 5⁠–⁠95%</span>
           <span><svg width="22" height="10"><path d="M0 5h22" stroke="var(--ink-3)" /></svg>95% interval over machine × periods</span>
         </div>
       </Plate>
@@ -748,15 +748,15 @@ function StepCost({ r }: { r: Results }) {
         head={[['Fig. 7', 'Triage load'], ['Basis', '1,000 good parts'], ['Assumed', `${min} min / alarm`], ['Windows', 'program-aligned']]}
         foot={<><span>hours = false-alarm rate × 1,000 × minutes ÷ 60</span><span>Stale: 2019 limits · Re-qualified: first 20 good parts</span></>}
       >
-        <div className="rq" style={{ gridTemplateColumns: 'minmax(96px, 172px) minmax(0, 1fr) minmax(88px, 150px)' }}>
+        <div className="rq cost" style={{ gridTemplateColumns: 'minmax(96px, 172px) minmax(0, 1fr) minmax(88px, 150px)' }}>
           {data.map(({ d, stale, req }) => (
             <div className="rq-row" key={d.key}>
-              <div className="rq-name">{d.short}{d.key === 'cycle' && '*'}</div>
+              <div className="rq-name"><span>{d.short}{d.key === 'cycle' && '*'}</span><span className="cost-m"><span className="muted">{f(stale)} →</span> {f(req)} h</span></div>
               <div className="rq-track">
                 {ticks.slice(1, -1).map((v) => <div key={v} className="rq-grid" style={{ left: `${(100 * v) / max}%` }} />)}
                 <div style={{ position: 'absolute', top: '50%', left: `${(100 * req) / max}%`, width: `${(100 * (stale - req)) / max}%`, height: 1, background: 'var(--ink-3)' }} />
                 <div className="rq-pt" style={{ transform: `translateX(${(100 * stale) / max}%)` }}><i style={{ background: 'var(--paper)', boxShadow: '0 0 0 1.5px var(--ink)' }} /></div>
-                <div className={`rq-pt${d.key === 'knn' ? ' ai' : ''}`} style={{ transform: `translateX(${(100 * req) / max}%)` }}><i /></div>
+                <div className="rq-pt" style={{ transform: `translateX(${(100 * req) / max}%)` }}><i /></div>
               </div>
               <div className="rq-det mono" style={{ fontSize: 13 }}>
                 <span><span className="muted">{f(stale)} h →</span> <b style={{ fontWeight: 500 }}>{f(req)} h</b></span>
@@ -790,7 +790,7 @@ const CHECKS: [string, string][] = [
   ['Real data: conformal limits inside the qualification period, every chart, arm and seed', '4.4–4.8% vs 5%'],
   ['T² control limit by hand, p = 3, n = 20, α = 0.01', '18.25 = 18.25'],
   ['Every embedding fold fitted without its target machine, bad parts or post-2019 parts (27 folds)', 'none leaked'],
-  ['Envelope alignment recovers known start offsets of 0, 0.5, 3 and 11 s', 'exact'],
+  ['Envelope alignment recovers known start offsets of 0, 0.5, 3 and 11\u00a0s', 'exact'],
   ['Reimplemented RMS and T²+SPE charts against the original like-for-like AUCs', '0.884 / 0.960'],
 ]
 const LIMITS = [
