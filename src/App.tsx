@@ -138,7 +138,7 @@ function Story({ r }: { r: Results }) {
           Data: Bosch CNC Machining dataset (Tnani, Feil, Diepold, <i>Procedia CIRP</i> 107, 2022), CC BY 4.0. Every number on this page is
           measured by the pipeline and precomputed; no simulated data.
         </p>
-        <p className="end">More work at <a href="https://ibiraheel.com">ibiraheel.com</a></p>
+        <p className="end"><a href="https://github.com/ibi-raheel/cnc-process-window-lens">Source on GitHub</a> · More work at <a href="https://ibiraheel.com">ibiraheel.com</a></p>
       </footer>
     </>
   )
@@ -195,7 +195,7 @@ function Picker({ r, cell, setCell }: { r: Results; cell: string; setCell: (c: s
       </label>
       <label className="ctl">
         <span>Operation</span>
-        <select className="sel" value={op} onChange={(e) => setCell(`${m}-${e.target.value}`)}>
+        <select className="sel" name="operation" value={op} onChange={(e) => setCell(`${m}-${e.target.value}`)}>
           {ops.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       </label>
@@ -557,7 +557,7 @@ function StepVerdict({ r }: { r: Results }) {
       <div className="controls">
         <label className="ctl">
           <span>Alarm</span>
-          <select className="sel" value={sel} onChange={(e) => setSel(+e.target.value)} style={{ maxWidth: '100%' }}>
+          <select className="sel" name="part" value={sel} onChange={(e) => setSel(+e.target.value)} style={{ maxWidth: '100%' }}>
             {later.map((x) => (
               <option key={x.row} value={x.row}>{x.label ? 'bad' : 'good'} · {x.machine} {x.op} · {TF_LABEL(x.timeframe)} #{String(x.part).padStart(3, '0')}</option>
             ))}
@@ -633,7 +633,7 @@ function StepRequal({ r }: { r: Results }) {
         <div className="ctl" style={{ width: 'min(560px, 100%)' }}>
           <span>Confirmed-good parts after the change: N = {N}</span>
           <div className="range">
-            <input type="range" min={0} max={NS.length - 1} step={1} value={ni} onChange={(e) => setNi(+e.target.value)} aria-label="Number of re-qualification parts" aria-valuetext={`N = ${N}`} />
+            <input type="range" name="requal-n" min={0} max={NS.length - 1} step={1} value={ni} onChange={(e) => setNi(+e.target.value)} aria-label="Number of re-qualification parts" aria-valuetext={`N = ${N}`} />
             <div className="ticks">
               {NS.map((n, i) => <button key={n} type="button" aria-current={i === ni} onClick={() => setNi(i)}>{n}</button>)}
             </div>
@@ -744,7 +744,7 @@ function StepCost({ r }: { r: Results }) {
           <span>Triage minutes per alarm</span>
           <div className="cost-in">
             <button type="button" aria-label="Fewer minutes" onClick={() => setMin((m) => clamp(m - 5))}>−</button>
-            <input type="number" inputMode="numeric" min={1} max={120} value={min} aria-label="Triage minutes per alarm" onChange={(e) => setMin(clamp(+e.target.value || 1))} />
+            <input type="number" name="triage-minutes" inputMode="numeric" min={1} max={120} value={min} aria-label="Triage minutes per alarm" onChange={(e) => setMin(clamp(+e.target.value || 1))} />
             <button type="button" aria-label="More minutes" onClick={() => setMin((m) => clamp(m + 5))}>+</button>
           </div>
         </div>
